@@ -1,12 +1,14 @@
-package server
+package geerpc
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
 	"geerpc/codec"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +16,12 @@ import (
 )
 
 const MagicNumber = 0x3bef5c
+
+const (
+	connected        = "200 connected to Gee RPC"
+	defaultRPCPath   = "/_geeprc_"
+	defaultDebugPath = "/debug/geerpc"
+)
 
 type Option struct {
 	MagicNumber    int
@@ -130,7 +138,7 @@ func (s *Server) readRequest(cc codec.Codec) (*Request, error) {
 func (s *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) error {
 	sending.Lock()
 	defer sending.Unlock()
-
+	log.Println("Sending response")
 	if err := cc.Write(h, body); err != nil {
 		return err
 	}
@@ -154,6 +162,7 @@ func (s *Server) handleRequest(cc codec.Codec, req *Request, sending *sync.Mutex
 			sent <- struct{}{}
 			return
 		}
+		_ = s.sendResponse(cc, req.H, req.Reply.Interface(), sending)
 		sent <- struct{}{}
 	}()
 
@@ -193,6 +202,33 @@ func (s *Server) findService(serviceMethod string) (svc *service, mtype *methodT
 	}
 
 	return svc, mtype, nil
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	log.Printf("connection established")
+	if req.Method != "CONNECT" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = io.WriteString(w, "405 must CONNECT\n")
+		return
+	}
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		log.Print("rpc hijacking ", req.RemoteAddr, ": ", err.Error())
+		return
+	}
+	_, _ = io.WriteString(conn, "HTTP/1.0 "+connected+"\n\n")
+	s.handleConn(conn)
+}
+
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
+}
+
+func (s *Server) HandleHTTP() {
+	http.Handle(defaultRPCPath, s)
+	http.Handle(defaultDebugPath, &debugHTTP{s})
+	log.Println("rpc server debug path:", defaultDebugPath)
 }
 
 func NewServer() *Server {

@@ -1,37 +1,31 @@
-package client
+package geerpc
 
 import (
 	"context"
-	"fmt"
-	"geerpc/server"
 	"net"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-func _assert(condition bool, msg string, v ...interface{}) {
-	if !condition {
-		panic(fmt.Sprintf("assertion failed: "+msg, v...))
-	}
-}
-
 func TestClient_diaTimeout(t *testing.T) {
 	t.Parallel()
 	l, _ := net.Listen("tcp", "127.0.0.1:0")
 
-	f := func(conn net.Conn, opt *server.Option) (client *Client, err error) {
+	f := func(conn net.Conn, opt *Option) (client *Client, err error) {
 		_ = conn.Close()
 		time.Sleep(time.Second * 2)
 		return nil, nil
 	}
 
 	t.Run("timeout", func(t *testing.T) {
-		_, err := dialTimeout(f, "tcp", l.Addr().String(), &server.Option{ConnectTimeout: time.Second})
+		_, err := dialTimeout(f, "tcp", l.Addr().String(), &Option{ConnectTimeout: time.Second})
 		_assert(err != nil && strings.Contains(err.Error(), "connect timeout"), "expect a timeout error")
 	})
 	t.Run("0", func(t *testing.T) {
-		_, err := dialTimeout(f, "tcp", l.Addr().String(), &server.Option{ConnectTimeout: 0})
+		_, err := dialTimeout(f, "tcp", l.Addr().String(), &Option{ConnectTimeout: 0})
 		_assert(err == nil, "0 means no limit")
 	})
 }
@@ -45,11 +39,11 @@ func (b *Bar) Timeout(argv int, reply *int) error {
 
 func startServer(addr chan string) {
 	var b Bar
-	_ = server.Register(&b)
+	_ = Register(&b)
 	// pick a free port
 	l, _ := net.Listen("tcp", ":0")
 	addr <- l.Addr().String()
-	server.Accept(l)
+	Accept(l)
 }
 
 func TestClient_Call(t *testing.T) {
@@ -59,8 +53,8 @@ func TestClient_Call(t *testing.T) {
 	addr := <-addrCh
 	time.Sleep(time.Second)
 	t.Run("client timeout", func(t *testing.T) {
-		server.DefaultOption.ConnectTimeout = time.Second
-		client, _ := Dial("tcp", addr, server.DefaultOption)
+		DefaultOption.ConnectTimeout = time.Second
+		client, _ := Dial("tcp", addr, DefaultOption)
 		ctx, _ := context.WithTimeout(context.Background(), time.Second*1)
 		var reply int
 		err := client.Call(ctx, "Bar.Timeout", 1, &reply)
@@ -68,11 +62,30 @@ func TestClient_Call(t *testing.T) {
 	})
 
 	t.Run("server handle timeout", func(t *testing.T) {
-		server.DefaultOption.HandleTimeout = time.Second
-		server.DefaultOption.ConnectTimeout = 0
-		c, _ := Dial("tcp", addr, server.DefaultOption)
+		DefaultOption.HandleTimeout = time.Second
+		DefaultOption.ConnectTimeout = 0
+		c, _ := Dial("tcp", addr, DefaultOption)
 		var reply int
 		err := c.Call(context.Background(), "Bar.Timeout", 1, &reply)
 		_assert(err != nil && strings.Contains(err.Error(), "handle timeout"), "expect a timeout error")
 	})
+}
+
+func TestXDial(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		ch := make(chan struct{})
+		addr := "/tmp/geerpc.sock"
+		go func() {
+			_ = os.Remove(addr)
+			l, err := net.Listen("unix", addr)
+			if err != nil {
+				t.Fatal("failed to listen unix socket")
+			}
+			ch <- struct{}{}
+			Accept(l)
+		}()
+		<-ch
+		_, err := XDial("unix@"+addr, DefaultOption)
+		_assert(err == nil, "failed to connect unix socket")
+	}
 }
