@@ -52,6 +52,37 @@ type Client struct {
 	shutdown bool // server has told us to stop
 }
 
+func (client *Client) Close() error {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if client.closing {
+		return nil
+	}
+
+	client.closing = true
+
+	if client.shutdown {
+		return nil
+	}
+
+	client.shutdown = true
+
+	if client.cc != nil {
+		_ = client.cc.Close()
+	}
+
+	for _, call := range client.pending {
+		call.done()
+	}
+
+	return nil
+}
+
+func (client *Client) IsAvailable() bool {
+	return client.closing && client.shutdown
+}
+
 // 注册 RPC
 func (client *Client) registerCall(call *Call) (uint64, error) {
 	client.mu.Lock()

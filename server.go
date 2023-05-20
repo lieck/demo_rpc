@@ -132,6 +132,7 @@ func (s *Server) readRequest(cc codec.Codec) (*Request, error) {
 		return req, err
 	}
 
+	log.Printf("[server] read request %s seq:%v", req.svc.name, req.H.Seq)
 	return req, nil
 }
 
@@ -221,10 +222,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	s.handleConn(conn)
 }
 
-func HandleHTTP() {
-	DefaultServer.HandleHTTP()
-}
-
 func (s *Server) HandleHTTP() {
 	http.Handle(defaultRPCPath, s)
 	http.Handle(defaultDebugPath, &debugHTTP{s})
@@ -241,4 +238,10 @@ func Accept(list net.Listener) {
 	DefaultServer.Accept(list)
 }
 
-func Register(rcvr interface{}) error { return DefaultServer.Register(rcvr) }
+func Register(rcvr interface{}) error {
+	return DefaultServer.Register(rcvr)
+}
+
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
+}
